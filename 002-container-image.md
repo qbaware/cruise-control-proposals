@@ -51,24 +51,36 @@ CMD ["./kafka-cruise-control-start.sh", "config/cruisecontrol.properties", "9090
 #### Configuration
 
 The image contains no Cruise Control configuration.
-Users always mount their own config directory at `/cc/config`:
+Users must provide their own, and can use environment variables on top of it.
+
+**Config files (required)**: Mount a config directory at `/cc/config` with:
+
+- `cruisecontrol.properties`,
+- the capacity file (e.g. `capacityJBOD.json`) and any other files the properties refer to,
+- optionally `cruise_control_jaas.conf`, which the start script picks up.
+
+The repository's `config/` directory is the template.
+Its values cannot be used as-is: `bootstrap.servers` points at `localhost` and the capacity files describe example brokers.
+Without a mounted config, the container fails at startup instead of running against the wrong cluster or wrong capacities.
+
+**Environment variables (optional)**:
+
+- Any property can reference an environment variable with `${env:NAME}`, e.g. `bootstrap.servers=${env:BOOTSTRAP_SERVERS}`.
+  This keeps per-environment values and secrets out of the config files.
+- The start script reads `KAFKA_HEAP_OPTS`, `KAFKA_JVM_PERFORMANCE_OPTS`, `KAFKA_OPTS`, `JMX_PORT` and `KAFKA_LOG4J_OPTS` for JVM settings.
 
 ```sh
 docker run -p 9090:9090 \
-  -v $(pwd)/config:/cc/config \
+  -v $(pwd)/my-config:/cc/config \
   -v cc-filestore:/cc/fileStore \
+  -e BOOTSTRAP_SERVERS=kafka:9092 \
+  -e KAFKA_HEAP_OPTS=-Xmx2G \
   cruise-control
 ```
 
-`/cc/config` must contain `cruisecontrol.properties` and the files it refers to (e.g. the capacity file).
-If it contains `cruise_control_jaas.conf`, the start script picks it up.
-The repository's `config/` directory serves as a template.
-Properties can reference environment variables with `${env:NAME}`, e.g. for secrets.
-
-The default config cannot work in a container as-is: `bootstrap.servers` points at `localhost` and the capacity file describes example brokers.
-Without a mounted config, the container fails at startup instead of running against the wrong cluster or wrong capacities.
-
 `/cc/fileStore` is optional and keeps the failed-broker list across restarts.
+
+The `cruise-control` repository documents this in `docker/README.md`.
 
 ### Phase 2: Publish an official image
 
@@ -102,7 +114,7 @@ Add a GitHub Actions workflow that builds and publishes the image with each rele
 
 ## Affected/not affected projects
 
-- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, a release workflow and docs.
+- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow.
 - **`cruise-control-proposals`**: Only this proposal.
 
 ## Compatibility
@@ -133,11 +145,10 @@ Requires a JDK and a Gradle build on the host, and makes the result depend on th
 
 Adds a build plugin to maintain and does not reuse the start script.
 
-### Configuration through environment variables
+### Configuration through environment variables only
 
-Adds a translation layer to maintain.
-Properties can already use `${env:NAME}` for individual values.
-Can be added later without breaking file-based configuration.
+Mapping every property to its own environment variable (e.g. `CRUISE_CONTROL_BOOTSTRAP_SERVERS`) adds a translation layer to maintain.
+`${env:NAME}` in the mounted properties already covers values that change per environment.
 
 ### Pointing users to third-party images
 
