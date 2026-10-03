@@ -56,10 +56,10 @@ Users must provide their own, and can use environment variables on top of it.
 **Config files (required)**: Mount a config directory at `/cc/config` with:
 
 - `cruisecontrol.properties`,
-- the capacity file (e.g. `capacityJBOD.json`) and any other files the properties refer to,
+- the capacity file (e.g. `capacityJBOD.json`) and any other files Cruise Control reads (e.g. `clusterConfigs.json`, `brokerSets.json`),
 - optionally `cruise_control_jaas.conf`, which the start script picks up.
 
-The repository's `config/` directory is the template.
+The easiest start is a copy of the repository's `config/` directory.
 Its values cannot be used as-is: `bootstrap.servers` points at `localhost` and the capacity files describe example brokers.
 Without a mounted config, the container fails at startup instead of running against the wrong cluster or wrong capacities.
 
@@ -90,11 +90,11 @@ Add a GitHub Actions workflow that builds and publishes the image with each rele
 - **Tags**: The release version (e.g. `3.1.0`) and `latest`.
   Optionally `main` for unreleased builds.
 - **Architectures**: `linux/amd64` and `linux/arm64`.
-- **CI**: Pull requests that touch the `Dockerfile` or the build build the image without pushing it.
+- **CI**: Pull requests that change the `Dockerfile` or the Gradle build also build the image, without pushing it.
 
 ### Before publishing
 
-- Run as a non-root user that can write to `/cc/logs` and `/cc/fileStore`.
+- Run as a non-root user that can write to `/cc/fileStore` and `/cc/logs` (the start script creates the latter).
 - Pin base images by version and digest.
 - Scan the image for CVEs in CI.
 - Add OCI labels (`source`, `version`, `revision`, `licenses`).
@@ -124,7 +124,7 @@ The change is additive: the Gradle build, start script, configuration format and
 Once published, these become part of the image's contract and changes to them go in the release notes:
 
 - image name and tags,
-- `/cc/config`, `/cc/fileStore` and `/cc/logs`,
+- `/cc/config` and `/cc/fileStore`,
 - port `9090`,
 - container user,
 - Java runtime version.
