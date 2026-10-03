@@ -70,7 +70,7 @@ Without a mounted config, the container fails at startup.
 
 - Any property can reference an environment variable with `${env:NAME}`, e.g. `bootstrap.servers=${env:BOOTSTRAP_SERVERS}`.
   This keeps per-environment values and secrets out of the config files.
-- The start script reads `KAFKA_HEAP_OPTS`, `KAFKA_JVM_PERFORMANCE_OPTS`, `KAFKA_OPTS`, `JMX_PORT` and `KAFKA_LOG4J_OPTS` for JVM settings.
+- The start script reads JVM settings from variables such as `KAFKA_HEAP_OPTS`, `KAFKA_OPTS`, `KAFKA_JMX_OPTS` and `JMX_PORT`.
 
 ```sh
 docker run -p 9090:9090 \
@@ -83,7 +83,7 @@ docker run -p 9090:9090 \
 
 `/cc/fileStore` is optional and keeps the failed-broker list across restarts.
 
-`docker/README.md` in [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348) documents this for users.
+The Dockerfile PR ([#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348)) documents this for users in `docker/README.md`.
 
 ### Phase 2: Publish an official image
 
@@ -98,7 +98,7 @@ Add a GitHub Actions workflow that builds and publishes the image with each rele
 
 ### Before publishing
 
-- Run as a non-root user that can write to `/cc/fileStore`.
+- Run as a non-root user that can write to `/cc/fileStore` and to `LOG_DIR` (default `/cc/logs`), which the start script creates.
 - Pin base images by version and digest.
 - Scan the image for CVEs in CI.
 - Add OCI labels (`source`, `version`, `revision`, `licenses`).
