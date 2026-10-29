@@ -26,31 +26,35 @@ An official image was requested in [#2263](https://github.com/cruise-control-for
 Add a multi-stage `Dockerfile` and a `.dockerignore`, based on [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348):
 
 ```dockerfile
-FROM --platform=$BUILDPLATFORM amazoncorretto:21-alpine-jdk AS build
+FROM --platform=$BUILDPLATFORM amazoncorretto:17-alpine-jdk AS build
 WORKDIR /workspace
 COPY . .
 RUN ./gradlew clean jar copyDependantLibs --warning-mode all
 
-FROM amazoncorretto:21-alpine AS runtime
+FROM amazoncorretto:17-alpine AS runtime
 RUN apk add --no-cache bash
 WORKDIR /cc
 COPY --from=build /workspace/cruise-control/build/libs/ /cc/cruise-control/build/libs/
 COPY --from=build /workspace/cruise-control/build/dependant-libs/ /cc/cruise-control/build/dependant-libs/
 COPY --from=build /workspace/kafka-cruise-control-start.sh /cc/
 COPY docker/log4j2.properties /cc/log4j2.properties
-ENV KAFKA_LOG4J_OPTS="-Dlog4j.configurationFile=file:/cc/log4j2.properties"
+ENV CRUISE_CONTROL_LOG4J_OPTS="-Dlog4j.configurationFile=file:/cc/log4j2.properties"
 EXPOSE 9090
 CMD ["./kafka-cruise-control-start.sh", "config/cruisecontrol.properties", "9090", "0.0.0.0"]
 ```
 
 - **Self-contained build**: Gradle runs inside the build stage, so Docker is the only prerequisite.
   `.git` stays in the build context because the build derives the version from its tags and the commit id from `HEAD`.
+- **Java 17**: The Gradle toolchain requires Java 17 and cannot download one, so the build stage must be a JDK 17 image.
+  The runtime uses Java 17 as well, matching CI.
 - **Small runtime image**: The runtime stage only gets the jars, the start script and a log config.
   The build stage runs on the build host's platform, since the jars are platform-independent.
-- **Existing start script**: The image starts Cruise Control the same way as a regular install, so `KAFKA_HEAP_OPTS`, `KAFKA_OPTS`, `JMX_PORT`, etc. work unchanged.
+- **Existing start script**: The image starts Cruise Control the same way as a regular install, so `CRUISE_CONTROL_HEAP_OPTS`, `CRUISE_CONTROL_JVM_OPTS`, `JMX_PORT`, etc. work unchanged.
   The script `exec`s the JVM, so it receives `SIGTERM` when the container stops.
 - **Console logging**: The image ships its own `log4j2.properties` that logs to the console only, outside the user's config directory.
+  A `log4j2.properties` in the mounted config is ignored; users who want their own point `CRUISE_CONTROL_LOG4J_OPTS` at it.
 - **Fixed endpoint**: The REST API always listens on `0.0.0.0:9090`, overriding `webserver.http.port` and `webserver.http.address`.
+- **Health check**: `GET /kafkacruisecontrol/state` serves as the liveness and readiness check for Compose and Kubernetes.
 
 #### Configuration
 
@@ -70,14 +74,15 @@ Without a mounted config, the container fails at startup.
 
 - Any property can reference an environment variable with `${env:NAME}`, e.g. `bootstrap.servers=${env:BOOTSTRAP_SERVERS}`.
   This keeps per-environment values and secrets out of the config files.
-- The start script reads JVM settings from variables such as `KAFKA_HEAP_OPTS`, `KAFKA_OPTS`, `KAFKA_JMX_OPTS` and `JMX_PORT`.
+- The start script reads JVM settings from variables such as `CRUISE_CONTROL_HEAP_OPTS`, `CRUISE_CONTROL_JVM_OPTS`, `CRUISE_CONTROL_JMX_OPTS` and `JMX_PORT`.
+  The older `KAFKA_*` names still work but are deprecated.
 
 ```sh
 docker run -p 9090:9090 \
   -v $(pwd)/my-config:/cc/config \
   -v cc-filestore:/cc/fileStore \
   -e BOOTSTRAP_SERVERS=kafka:9092 \
-  -e KAFKA_HEAP_OPTS=-Xmx2G \
+  -e CRUISE_CONTROL_HEAP_OPTS=-Xmx2G \
   cruise-control
 ```
 
@@ -87,13 +92,14 @@ The Dockerfile PR ([#2348](https://github.com/cruise-control-for-kafka/cruise-co
 
 ### Phase 2: Publish an official image
 
-Add a GitHub Actions workflow that builds and publishes the image with each release.
+Add a job that builds and publishes the image with each release, triggered the same way as `publish.yaml` (manually, with the release tag as input).
 
 - **Registry**: GHCR (`ghcr.io/cruise-control-for-kafka/cruise-control`), using the workflow's `GITHUB_TOKEN`.
 - **Tags**: The release version (e.g. `3.1.0`) and `latest`.
+  Release candidates (e.g. `3.1.0-rc1`) get only their version tag, never `latest`.
   Optionally `main` for unreleased builds.
 - **Architectures**: `linux/amd64` and `linux/arm64`.
-- **Checkout**: Full history and tags (`fetch-depth: 0`, as in `ci.yaml`), so the jars get the release version.
+- **Checkout**: The release tag with full history (`fetch-depth: 0`, as in `publish.yaml`), so the jars get the release version.
 - **CI**: Pull requests that change the `Dockerfile` or the Gradle build also build the image, without pushing it.
 
 ### Before publishing
@@ -103,10 +109,27 @@ Add a GitHub Actions workflow that builds and publishes the image with each rele
 - Scan the image for CVEs in CI.
 - Add OCI labels (`source`, `version`, `revision`, `licenses`).
 
+### Bonus: System tests with the image
+
+Not required for Phase 1 or 2, but the image makes end-to-end tests cheap to add.
+Today's integration tests run Cruise Control inside the test JVM, so they do not cover the start script, the packaging or the config handling that users of the image rely on.
+
+System tests run the image the way users do:
+
+- **Setup**: Testcontainers (already a test dependency) starts a multi-broker KRaft cluster with the metrics reporter, reusing `CCContainerizedKraftCluster`.
+  A Cruise Control container from the built image joins the same network with a mounted test config.
+- **Smoke**: The container starts, `GET /kafkacruisecontrol/state` reports all components ready, and it shuts down cleanly on `docker stop`.
+- **Image contract**: A missing config fails at startup, `${env:NAME}` values and `CRUISE_CONTROL_*` JVM variables are applied, and the container runs as the documented user.
+- **Operations**: Proposals are generated from reporter metrics, a non-dry-run rebalance moves replicas, `add_broker` and `remove_broker` complete, and a stopped broker is detected and self-healed.
+- **Persistence**: The failed-broker list in `/cc/fileStore` survives a Cruise Control container restart.
+- **Kafka versions**: The same tests run against several Kafka images through the existing `KAFKA_IMAGE` variable.
+
+They would live in a separate Gradle task (e.g. `systemTest`), run in CI on the PRs that build the image, and gate the publish step of the release workflow.
+
 ### Open questions
 
-- **Java version**: CI only tests on Java 17.
-  Should the image use Java 17, or should CI add Java 21?
+- **Java version**: The build and CI use Java 17.
+  Should the runtime move to Java 21 once CI also tests on it?
 - **Base image**: `amazoncorretto` (Alpine) or `eclipse-temurin`?
 - **Tags**: Are floating minor tags (e.g. `3.1`) needed?
 - **Rebuilds**: Should the latest release be rebuilt on a schedule to pick up base image and JRE fixes between releases?
@@ -119,7 +142,7 @@ Add a GitHub Actions workflow that builds and publishes the image with each rele
 
 ## Affected/not affected projects
 
-- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow.
+- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow, plus optional system tests.
 - **`cruise-control-proposals`**: Only this proposal.
 
 ## Compatibility
