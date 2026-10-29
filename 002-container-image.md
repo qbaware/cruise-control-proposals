@@ -30,13 +30,12 @@ Downstream images exist (e.g. [Adobe's fork](https://github.com/adobe/cruise-con
 Add an initial, simple, multi-stage `Dockerfile` and a `.dockerignore`, based on [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348):
 
 ```dockerfile
-FROM --platform=$BUILDPLATFORM amazoncorretto:17-alpine-jdk AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk AS build
 WORKDIR /workspace
 COPY . .
 RUN ./gradlew clean jar copyDependantLibs --warning-mode all
 
-FROM amazoncorretto:17-alpine AS runtime
-RUN apk add --no-cache bash
+FROM eclipse-temurin:17-jre AS runtime
 WORKDIR /cc
 COPY --from=build /workspace/cruise-control/build/libs/ /cc/cruise-control/build/libs/
 COPY --from=build /workspace/cruise-control/build/dependant-libs/ /cc/cruise-control/build/dependant-libs/
@@ -51,7 +50,9 @@ CMD ["./kafka-cruise-control-start.sh", "config/cruisecontrol.properties", "9090
   `.git` stays in the build context because the build derives the version from its tags and the commit id from `HEAD`.
 - **Java 17**: The Gradle toolchain requires Java 17 and cannot download one, so the build stage must be a JDK 17 image.
   The runtime uses Java 17 as well, matching CI.
-- **Small runtime image**: The runtime stage only gets the jars, the start script and a log config.
+- **Eclipse Temurin**: Both stages use Temurin, the distribution CI tests on.
+  The runtime is the Ubuntu-based JRE image rather than Alpine, because the Kafka client's native zstd and snappy libraries have no Alpine (musl) builds for both `amd64` and `arm64`.
+- **Small runtime image**: The runtime stage is a JRE, not a JDK, and only gets the jars, the start script and a log config.
   The build stage runs on the build host's platform, since the jars are platform-independent.
 - **Existing start script**: The image starts Cruise Control the same way as a regular install, so `CRUISE_CONTROL_HEAP_OPTS`, `CRUISE_CONTROL_JVM_OPTS`, `JMX_PORT`, etc. work unchanged.
   The script `exec`s the JVM, so it receives `SIGTERM` when the container stops.
