@@ -1,21 +1,25 @@
 # Official Container Image for Cruise Control
 
-This proposal adds a `Dockerfile` to the Cruise Control repository and later publishes an official image with each release.
+This proposal adds a `Dockerfile` to the Cruise Control repository and publishes an official image with each release.
 
 ## Current situation
 
-To run Cruise Control, users clone the repository, build it with Gradle, edit `config/cruisecontrol.properties` and run `kafka-cruise-control-start.sh`.
-This needs a JDK and a repository checkout on every host.
+To run Cruise Control, users have to:
+
+- Clone the repository,
+- Build it with Gradle,
+- Edit `config/cruisecontrol.properties`,
+- And run `kafka-cruise-control-start.sh`.
+
+This needs a JDK and a repository checkout on every host which is honestly not ideal nowadays.
 
 The project provides no `Dockerfile` or image, so container users build their own.
-Downstream images exist (e.g. [Adobe's fork](https://github.com/adobe/cruise-control/tree/master/docker), Strimzi's Kafka image), but the project maintains none of them.
-
-An official image was requested in [#2263](https://github.com/cruise-control-for-kafka/cruise-control/issues/2263), and [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348) proposes a first `Dockerfile`.
+Downstream images exist (e.g. [Adobe's fork](https://github.com/adobe/cruise-control/tree/master/docker)), but the project maintains none of them.
 
 ## Motivation
 
 - **Easier to try**: Running Cruise Control should take a `docker run`, not a JDK and a Gradle build.
-- **Easier to develop and test**: Cruise Control can run next to Kafka in Docker Compose.
+- **Easier to develop and test**: Cruise Control can run next to Kafka in Docker Compose. We can also potentially run Cruise Control inside of wider system and/or e2e tests.
 - **Production use**: Teams on container platforms get a known-good image instead of each maintaining their own.
 - **Security fixes**: Users of an official image get Cruise Control's CVE fixes with the release, not when a third party rebuilds.
 
@@ -23,7 +27,7 @@ An official image was requested in [#2263](https://github.com/cruise-control-for
 
 ### Phase 1: `Dockerfile` in the repository
 
-Add a multi-stage `Dockerfile` and a `.dockerignore`, based on [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348):
+Add an initial, simple, multi-stage `Dockerfile` and a `.dockerignore`, based on [#2348](https://github.com/cruise-control-for-kafka/cruise-control/pull/2348):
 
 ```dockerfile
 FROM --platform=$BUILDPLATFORM amazoncorretto:17-alpine-jdk AS build
@@ -109,23 +113,6 @@ Add a job that builds and publishes the image with each release, triggered the s
 - Scan the image for CVEs in CI.
 - Add OCI labels (`source`, `version`, `revision`, `licenses`).
 
-### Bonus: System tests with the image
-
-Not required for Phase 1 or 2, but the image makes end-to-end tests cheap to add.
-Today's integration tests run Cruise Control inside the test JVM, so they do not cover the start script, the packaging or the config handling that users of the image rely on.
-
-System tests run the image the way users do:
-
-- **Setup**: Testcontainers (already a test dependency) starts a multi-broker KRaft cluster with the metrics reporter, reusing `CCContainerizedKraftCluster`.
-  A Cruise Control container from the built image joins the same network with a mounted test config.
-- **Smoke**: The container starts, `GET /kafkacruisecontrol/state` reports all components ready, and it shuts down cleanly on `docker stop`.
-- **Image contract**: A missing config fails at startup, `${env:NAME}` values and `CRUISE_CONTROL_*` JVM variables are applied, and the container runs as the documented user.
-- **Operations**: Proposals are generated from reporter metrics, a non-dry-run rebalance moves replicas, `add_broker` and `remove_broker` complete, and a stopped broker is detected and self-healed.
-- **Persistence**: The failed-broker list in `/cc/fileStore` survives a Cruise Control container restart.
-- **Kafka versions**: The same tests run against several Kafka images through the existing `KAFKA_IMAGE` variable.
-
-They would live in a separate Gradle task (e.g. `systemTest`), run in CI on the PRs that build the image, and gate the publish step of the release workflow.
-
 ### Open questions
 
 - **Java version**: The build and CI use Java 17.
@@ -134,15 +121,9 @@ They would live in a separate Gradle task (e.g. `systemTest`), run in CI on the 
 - **Tags**: Are floating minor tags (e.g. `3.1`) needed?
 - **Rebuilds**: Should the latest release be rebuilt on a schedule to pick up base image and JRE fixes between releases?
 
-### Out of scope
-
-- **Helm chart / Kubernetes manifests**: A separate proposal.
-- **Cruise Control UI**: Lives outside the organization; users can mount it at `webserver.ui.diskpath`.
-- **Metrics reporter**: Runs inside the Kafka brokers, not in Cruise Control.
-
 ## Affected/not affected projects
 
-- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow, plus optional system tests.
+- **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow.
 - **`cruise-control-proposals`**: Only this proposal.
 
 ## Compatibility
@@ -160,34 +141,4 @@ Once published, these become part of the image's contract and changes to them go
 
 ## Rejected alternatives
 
-### Baking a default configuration into the image
-
-The default `bootstrap.servers` and capacity file only work for a local, non-containerized setup.
-A container started with them would either fail to connect or plan against example capacities.
-Requiring a mounted config makes this explicit.
-
-### Copying prebuilt JARs from the host
-
-Requires a JDK and a Gradle build on the host, and makes the result depend on the host environment.
-
-### Jib or another Gradle image plugin
-
-Adds a build plugin to maintain and does not reuse the start script.
-
-### Configuration through environment variables only
-
-Mapping every property to its own environment variable (e.g. `CRUISE_CONTROL_BOOTSTRAP_SERVERS`) adds a translation layer to maintain.
-`${env:NAME}` in the mounted properties already covers values that change per environment.
-
-### Pointing users to third-party images
-
-Not maintained by the project and may lag behind releases and CVE fixes.
-
-### Docker Hub
-
-Needs a separate account and secrets, and rate-limits anonymous pulls.
-Mirroring there later remains possible.
-
-### Bundling the UI
-
-Ties releases to a project outside the organization and grows the image.
+N/A
