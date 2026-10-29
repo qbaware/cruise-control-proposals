@@ -11,7 +11,7 @@ To run Cruise Control, users have to:
 - Edit `config/cruisecontrol.properties`,
 - And run `kafka-cruise-control-start.sh`.
 
-This needs a JDK and a repository checkout on every host which is honestly not ideal nowadays.
+This needs a JDK, Gradle, and a repository checkout on every host which is, honestly, not ideal nowadays.
 
 The project provides no `Dockerfile` or image, so container users build their own.
 Downstream images exist (e.g. [Adobe's fork](https://github.com/adobe/cruise-control/tree/master/docker)), but the project maintains none of them.
@@ -55,8 +55,6 @@ CMD ["./kafka-cruise-control-start.sh", "config/cruisecontrol.properties", "9090
   The build stage runs on the build host's platform, since the jars are platform-independent.
 - **Existing start script**: The image starts Cruise Control the same way as a regular install, so `CRUISE_CONTROL_HEAP_OPTS`, `CRUISE_CONTROL_JVM_OPTS`, `JMX_PORT`, etc. work unchanged.
   The script `exec`s the JVM, so it receives `SIGTERM` when the container stops.
-- **Console logging**: The image ships its own `log4j2.properties` that logs to the console only, outside the user's config directory.
-  A `log4j2.properties` in the mounted config is ignored; users who want their own point `CRUISE_CONTROL_LOG4J_OPTS` at it.
 - **Fixed endpoint**: The REST API always listens on `0.0.0.0:9090`, overriding `webserver.http.port` and `webserver.http.address`.
 - **Health check**: `GET /kafkacruisecontrol/state` serves as the liveness and readiness check for Compose and Kubernetes.
 
