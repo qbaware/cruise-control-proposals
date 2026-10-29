@@ -112,14 +112,6 @@ Add a job that builds and publishes the image with each release, triggered the s
 - Scan the image for CVEs in CI.
 - Add OCI labels (`source`, `version`, `revision`, `licenses`).
 
-### Open questions
-
-- **Java version**: The build and CI use Java 17.
-  Should the runtime move to Java 21 once CI also tests on it?
-- **Base image**: `amazoncorretto` (Alpine) or `eclipse-temurin`?
-- **Tags**: Are floating minor tags (e.g. `3.1`) needed?
-- **Rebuilds**: Should the latest release be rebuilt on a schedule to pick up base image and JRE fixes between releases?
-
 ## Affected/not affected projects
 
 - **`cruise-control`**: Adds `Dockerfile`, `.dockerignore`, `docker/log4j2.properties`, `docker/README.md` and a release workflow.
